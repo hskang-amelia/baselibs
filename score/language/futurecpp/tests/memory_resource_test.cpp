@@ -36,6 +36,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <new>
 #include <vector>
@@ -1599,6 +1600,106 @@ TEST_P(block_sizes_logarithmic, Spec)
 {
     EXPECT_EQ(score::cpp::pmr::detail::unsynchronized_pool_resource_utils::get_pool_index(get_block_size(), get_alignment()),
               get_pool_index_spec(get_block_size(), get_alignment()));
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9338042
+TEST(PmrTest, PolymorphicAllocator_AllocateBytesUsesResource)
+{
+    test_memory_resource mr;
+    score::cpp::pmr::polymorphic_allocator<> pma(&mr);
+
+    void* const p = pma.allocate_bytes(24U, 8U);
+    ASSERT_EQ(mr.allocations.count(p), 1U);
+    EXPECT_EQ(mr.allocations.at(p).bytes, 24U);
+    EXPECT_EQ(mr.allocations.at(p).alignment, 8U);
+
+    pma.deallocate_bytes(p, 24U, 8U);
+    EXPECT_TRUE(mr.allocations.at(p).is_freed);
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9338042
+TEST(PmrTest, PolymorphicAllocator_AllocateBytesDefaultsToMaxAlign)
+{
+    test_memory_resource mr;
+    score::cpp::pmr::polymorphic_allocator<> pma(&mr);
+
+    void* const p = pma.allocate_bytes(10U);
+    ASSERT_EQ(mr.allocations.count(p), 1U);
+    EXPECT_EQ(mr.allocations.at(p).alignment, alignof(std::max_align_t));
+
+    pma.deallocate_bytes(p, 10U);
+    EXPECT_TRUE(mr.allocations.at(p).is_freed);
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9338042
+TEST(PmrTest, PolymorphicAllocator_AllocateObjectUsesSizeAndAlignmentOfType)
+{
+    test_memory_resource mr;
+    score::cpp::pmr::polymorphic_allocator<> pma(&mr);
+
+    double* const p = pma.allocate_object<double>(3U);
+    ASSERT_EQ(mr.allocations.count(p), 1U);
+    EXPECT_EQ(mr.allocations.at(p).bytes, 3U * sizeof(double));
+    EXPECT_EQ(mr.allocations.at(p).alignment, alignof(double));
+
+    pma.deallocate_object(p, 3U);
+    EXPECT_TRUE(mr.allocations.at(p).is_freed);
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9338042
+TEST(PmrTest, PolymorphicAllocator_WhenAllocateObjectOverflowsThenPanic)
+{
+    test_memory_resource mr;
+    score::cpp::pmr::polymorphic_allocator<> pma(&mr);
+
+    SCORE_LANGUAGE_FUTURECPP_EXPECT_CONTRACT_VIOLATED(
+        pma.allocate_object<std::uint64_t>(std::numeric_limits<std::size_t>::max() / sizeof(std::uint64_t) + 1U));
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9338042
+TEST(PmrTest, PolymorphicAllocator_NewObjectUsesAllocatorConstruction)
+{
+    test_memory_resource mr;
+    score::cpp::pmr::polymorphic_allocator<> pma(&mr);
+
+    auto* const v = pma.new_object<score::cpp::pmr::vector<int>>(2U, 7);
+    ASSERT_EQ(mr.allocations.count(v), 1U);
+    EXPECT_EQ(v->get_allocator().resource(), &mr);
+    EXPECT_EQ(v->size(), 2U);
+    EXPECT_EQ((*v)[1], 7);
+
+    pma.delete_object(v);
+    for (const auto& allocation : mr.allocations)
+    {
+        EXPECT_TRUE(allocation.second.is_freed);
+    }
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9338042
+TEST(PmrTest, PolymorphicAllocator_DestroyCallsDestructor)
+{
+    struct counted
+    {
+        explicit counted(int& destroyed) : destroyed_{destroyed} {}
+        ~counted() { ++destroyed_; }
+        int& destroyed_;
+    };
+
+    test_memory_resource mr;
+    score::cpp::pmr::polymorphic_allocator<counted> pma(&mr);
+    int destroyed{0};
+
+    counted* const p = pma.allocate(1U);
+    pma.construct(p, destroyed);
+    pma.destroy(p);
+    EXPECT_EQ(destroyed, 1);
+    pma.deallocate(p, 1U);
 }
 
 } // anonymous namespace

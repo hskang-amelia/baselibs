@@ -30,6 +30,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <new>
 #include <utility>
 
 namespace score::cpp
@@ -37,7 +39,8 @@ namespace score::cpp
 namespace pmr
 {
 
-/// A polymorphic allocator in the style of C++17 std::pmr::polymorphic_allocator.
+/// A polymorphic allocator in the style of C++17 std::pmr::polymorphic_allocator, plus the C++20 members
+/// allocate_bytes, deallocate_bytes, allocate_object, deallocate_object, new_object and delete_object.
 /// See https://en.cppreference.com/w/cpp/memory/polymorphic_allocator for details.
 template <typename Tp = std::uint8_t>
 class polymorphic_allocator // NOLINT(cppcoreguidelines-special-member-functions) Follows literally the C++ standard
@@ -117,6 +120,62 @@ public:
     void construct(U* p, Args&&... args)
     {
         score::cpp::ignore = score::cpp::detail::uninitialized_construct_using_allocator(p, *this, std::forward<Args>(args)...);
+    }
+
+    /// Destroys the object pointed to by p by calling its destructor.
+    template <typename U>
+    void destroy(U* p)
+    {
+        p->~U();
+    }
+
+    /// Allocates nbytes bytes of storage at the given alignment from the underlying memory resource.
+    void* allocate_bytes(std::size_t nbytes, std::size_t alignment = alignof(std::max_align_t))
+    {
+        return resource_->allocate(nbytes, alignment);
+    }
+
+    ///\pre p must have been returned by allocate_bytes(nbytes, alignment) on a polymorphic allocator equal to *this
+    ///     and must not have been deallocated since.
+    void deallocate_bytes(void* p, std::size_t nbytes, std::size_t alignment = alignof(std::max_align_t))
+    {
+        resource_->deallocate(p, nbytes, alignment);
+    }
+
+    /// Allocates storage for n objects of type U from the underlying memory resource.
+    ///\pre n * sizeof(U) does not overflow std::size_t.
+    template <typename U>
+    U* allocate_object(std::size_t n = 1)
+    {
+        SCORE_LANGUAGE_FUTURECPP_PRECONDITION(n <= std::numeric_limits<std::size_t>::max() / sizeof(U));
+        return static_cast<U*>(allocate_bytes(sizeof(U) * n, alignof(U)));
+    }
+
+    ///\pre p must have been returned by allocate_object<U>(n) on a polymorphic allocator equal to *this and must
+    ///     not have been deallocated since.
+    template <typename U>
+    void deallocate_object(U* p, std::size_t n = 1)
+    {
+        deallocate_bytes(p, sizeof(U) * n, alignof(U));
+    }
+
+    /// Allocates storage for one U and constructs it from args by uses-allocator construction (see construct()).
+    template <typename U, typename... CtorArgs>
+    U* new_object(CtorArgs&&... ctor_args)
+    {
+        U* p = allocate_object<U>();
+        construct(p, std::forward<CtorArgs>(ctor_args)...);
+        return p;
+    }
+
+    /// Destroys the object pointed to by p and deallocates its storage.
+    ///\pre p must have been returned by new_object<U>() on a polymorphic allocator equal to *this and must not have
+    ///     been deleted since.
+    template <typename U>
+    void delete_object(U* p)
+    {
+        destroy(p);
+        deallocate_object(p);
     }
 
     memory_resource* resource() const { return resource_; }
