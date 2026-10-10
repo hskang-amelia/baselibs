@@ -148,6 +148,7 @@ cc_library(
         "include/score/private/memory_resource/pool.hpp",
         "include/score/private/memory_resource/pool_options.hpp",
         "include/score/private/memory_resource/resource_adaptor.hpp",
+        "include/score/private/memory_resource/synchronized_pool_resource.hpp",
         "include/score/private/memory_resource/unsynchronized_pool_resource.hpp",
         "include/score/private/numeric/lerp.hpp",
         "include/score/private/numeric/saturate_cast.hpp",

@@ -26,6 +26,7 @@
 #include <score/private/memory_resource/polymorphic_allocator.hpp>        // IWYU pragma: export
 #include <score/private/memory_resource/pool_options.hpp>                 // IWYU pragma: export
 #include <score/private/memory_resource/resource_adaptor.hpp>             // IWYU pragma: export
+#include <score/private/memory_resource/synchronized_pool_resource.hpp>   // IWYU pragma: export
 #include <score/private/memory_resource/unsynchronized_pool_resource.hpp> // IWYU pragma: export
 
 #endif // SCORE_LANGUAGE_FUTURECPP_MEMORY_RESOURCE_HPP

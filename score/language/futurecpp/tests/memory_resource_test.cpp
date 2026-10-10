@@ -38,6 +38,7 @@
 #include <functional>
 #include <memory>
 #include <new>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -1599,6 +1600,90 @@ TEST_P(block_sizes_logarithmic, Spec)
 {
     EXPECT_EQ(score::cpp::pmr::detail::unsynchronized_pool_resource_utils::get_pool_index(get_block_size(), get_alignment()),
               get_pool_index_spec(get_block_size(), get_alignment()));
+}
+
+struct synchronized_pool_resource_test : testing::Test
+{
+    test_memory_resource upstream{};
+};
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9487572
+TEST_F(synchronized_pool_resource_test, UpstreamAndOptionsMatchUnsynchronizedPool)
+{
+    const score::cpp::pmr::pool_options opts{4U, 256U};
+    score::cpp::pmr::synchronized_pool_resource pool{opts, &upstream};
+    score::cpp::pmr::unsynchronized_pool_resource reference{opts, &upstream};
+
+    EXPECT_EQ(pool.upstream_resource(), &upstream);
+    EXPECT_EQ(pool.options().max_blocks_per_chunk, reference.options().max_blocks_per_chunk);
+    EXPECT_EQ(pool.options().largest_required_pool_block, reference.options().largest_required_pool_block);
+    EXPECT_EQ(score::cpp::pmr::synchronized_pool_resource{}.upstream_resource(), score::cpp::pmr::get_default_resource());
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9487572
+TEST_F(synchronized_pool_resource_test, WhenConstructAndUpstreamIsNullptrThenPanic)
+{
+    SCORE_LANGUAGE_FUTURECPP_EXPECT_CONTRACT_VIOLATED((score::cpp::pmr::synchronized_pool_resource{nullptr}));
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9487572
+TEST_F(synchronized_pool_resource_test, IsEqualOnlyToItself)
+{
+    score::cpp::pmr::synchronized_pool_resource pool1{&upstream};
+    score::cpp::pmr::synchronized_pool_resource pool2{&upstream};
+
+    EXPECT_TRUE(pool1.is_equal(pool1));
+    EXPECT_FALSE(pool1.is_equal(pool2));
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9487572
+TEST_F(synchronized_pool_resource_test, ReleaseReturnsAllMemoryToUpstream)
+{
+    score::cpp::pmr::synchronized_pool_resource pool{&upstream};
+    score::cpp::ignore = pool.allocate(8U, 8U);
+    score::cpp::ignore = pool.allocate(4096U, 8U);
+
+    pool.release();
+
+    for (const auto& allocation : upstream.allocations)
+    {
+        EXPECT_TRUE(allocation.second.is_freed);
+    }
+}
+
+/// @testmethods TM_REQUIREMENT
+/// @requirement CB-#9487572
+TEST_F(synchronized_pool_resource_test, ConcurrentAllocateAndDeallocate)
+{
+    score::cpp::pmr::synchronized_pool_resource pool{score::cpp::pmr::new_delete_resource()};
+    constexpr int thread_count{4};
+    constexpr int iterations{1000};
+
+    const auto worker = [&pool](const int t)
+    {
+        for (int i = 0; i < iterations; ++i)
+        {
+            const std::size_t bytes{static_cast<std::size_t>(8 * (1 + ((i + t) % 8)))};
+            auto* const p = static_cast<unsigned char*>(pool.allocate(bytes, 8U));
+            std::memset(p, t, bytes);
+            EXPECT_EQ(p[bytes - 1U], static_cast<unsigned char>(t));
+            pool.deallocate(p, bytes, 8U);
+        }
+    };
+
+    std::vector<std::thread> threads;
+    for (int t = 0; t < thread_count; ++t)
+    {
+        threads.emplace_back(worker, t);
+    }
+    for (auto& thread : threads)
+    {
+        thread.join();
+    }
 }
 
 } // anonymous namespace
